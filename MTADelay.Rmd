@@ -1,0 +1,452 @@
+---
+title: "Forecasting MTA Subway Delay by Decision Tree and Random Forest"
+author: "Ruilin Peng"
+date: "2024-10-20"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(reticulate)
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+```
+
+# 1. Introduction
+
+As the largest public transit authority in North America, Metropolitan Transportation Authority carries over 11 million passengers on an average weekday system wide. However, delay is also a daily issue that causes inconvenience to the passengers and impacting the efficiency of the system. Subway delays, in particular, would increase passengers' travel time, disrupt train schedules, and lead to backlogs. 
+
+The ability to predict subway delays would potentially optimize service delivery, increase service efficiency, and improve passengers' experience. Thus in this report, I would try multiple algorithms to forecast the subway delays.
+
+## 2. Data
+
+## 2.1 Data Description
+
+The dataset used in this study comes from New York State open data uploaded by MTA. It consists monthly records of subway delay-number of delays in each cause and in each line.
+
+### Attributes Description
+
+\[
+\begin{array}{|c|p{5cm}|c|}
+\hline
+\textbf{Attribute} & \textbf{Description} & \textbf{Data Type} \\
+\hline
+month & The month in which subway trains delayed is being calculated (yyyy-mm-dd). & Floating\  Timestamp \\
+\hline
+division & The A Division (numbered subway lines), B Division (lettered subway lines) and systemwide. & Text \\
+\hline
+line & Each subway line (1, 2, 3, 4, 5, 6, 7, A, C, E, B, D, F, M, G, J, Z, L, N, Q, R, W, S 42nd, S Rock, S Fkln). & Text \\
+\hline
+day\_type & Represents weekday as 1 and weekend as 2. & Integer \\
+\hline
+reporting\_category & The main category under which the delay was reported (e.g., infrastructure, crew). & Text \\
+\hline
+subcategory & A more specific description of the cause of the delay (e.g., braking issues, weather). & Text \\
+\hline
+delays & The total number of delays reported for that particular instance. & Integer \\
+\hline
+\end{array}
+\]
+
+# 2.2 Explanatory Data Analysis
+```{r, include = FALSE}
+reticulate::py_install("scikit-learn")
+
+```
+```{r, include = FALSE}
+reticulate::py_install("matplot")
+```
+
+
+### 2.2.1 Delays by Reporting Category
+```{python, echo=FALSE}
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.preprocessing import LabelEncoder
+
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('MTA_Subway_Trains_Delayed__Beginning_2020_20241018.csv')
+
+category_delays = df.groupby('reporting_category')['delays'].sum().sort_values(ascending=False)
+
+category_delays_df = category_delays.reset_index()
+category_delays_df.columns = ['Reporting Category', 'Total Delays']
+```
+
+```{r, echo=FALSE}
+category_delays <- py$category_delays_df
+knitr::kable(category_delays, caption = "Summary of total delays by category")
+```
+
+
+```{python, echo=FALSE}
+
+category_delays.plot(kind='pie', autopct='%1.1f%%', startangle=90, figsize=(8,8))
+
+plt.title('Total Delays by Reporting Category')
+plt.ylabel('')
+plt.show()
+```
+From the summary and the plot, we can observe that the largest source of delay came from "Infrastructure & Equipment", making up over a quarter of all subway delays. This suggests that events such as track maintenance, signal failure turn out to be a major bottleneck for MTA subway system's efficiency. 
+
+As the second largest cause for delay, "Police & Medical" makes up almost 20% of all causes.
+
+Roughly the same proportion as the second largest cause, "Planned ROW Work" accounts for 19% of the delays. Thus the schedules of such event could be optimized.
+
+
+
+
+### 2.2.2 Delays by Day Type
+```{python, echo=FALSE}
+
+day_type_delays = df.groupby('day_type')['delays'].sum()
+
+day_type_delays_df = day_type_delays.reset_index()
+day_type_delays_df.columns = ['Day Type(1 = weekday, 2 = weekend)', 'Total Delays']
+```
+
+```{r, echo=FALSE}
+day_delays <- py$day_type_delays_df
+knitr::kable(day_delays, caption = "Summary of total delays by day type")
+```
+
+
+
+```{python, echo=FALSE}
+
+
+day_type_delays.plot(kind='bar', figsize=(6,4), title='Total Delays by Day Type', xlabel='Day Type(1 = weekday, 2 = weekend)', ylabel='Total Delays')
+plt.show()
+```
+Therefore, we can observe that most delays occur on weekdays when, theoretically, more passengers need to transit to work.
+
+### 2.2.3 Delays by Line
+
+```{python, echo=FALSE}
+color_map = {
+    '1': '#ee3e41',  
+    '2': '#ee3e41',  
+    '3': '#ee3e41',  
+    '4': '#50bc82',  
+    '5': '#50bc82', 
+    '6': '#50bc82',  
+    '7': '#ba65a9',  
+    'A': '#5f85c4', 
+    'C': '#5f85c4', 
+    'E': '#5f85c4',  
+    'B': '#f58821',  
+    'D': '#f58821',  
+    'F': '#f58821',  
+    'M': '#f58821',  
+    'N': '#fbe214',  
+    'Q': '#fbe214',  
+    'R': '#fbe214',  
+    'G': '#a3cd39', 
+    'L': '#aaaaaa',  
+    'S 42nd': '#898a8c',  
+    'S Rock': '#898a8c',  
+    'J': '#a18659',  
+    'Z': '#a18659'   
+}
+```
+
+
+```{python, echo=FALSE}
+# exclude value systemwide
+df = df[df['line'] != 'Systemwide']
+line_delays = df.groupby('line')['delays'].sum()
+
+line_delays_df = line_delays.reset_index()
+line_delays_df.columns = ['Line', 'Total Delays']
+```
+
+```{r, echo=FALSE}
+line_delays <- py$line_delays_df
+knitr::kable(line_delays, caption = "Summary of total delays by line")
+```
+
+
+
+```{python, echo=FALSE}
+colors = [color_map.get(line, '#333333') for line in line_delays.index]
+
+line_delays.plot(kind='bar', figsize=(6,4), title='Total Delays by Line', xlabel='Line', ylabel='Total Delays', color = colors)
+plt.show()
+```
+
+The lines with the most total delays such as N, A, F, and 6, are the lines that run through upper, midtown, lower Manhattan, which are parts of the city with the highest population densities.
+
+## 2.3 Data Preprocessing
+
+## 2.3.1 Preprocessing of month
+```{python, echo=FALSE}
+df['month'] = pd.to_datetime(df['month'])
+df['year'] = df['month'].dt.year
+df['month'] = df['month'].dt.month
+```
+A new column is introduced called "year", derived from the original "month" value which is a timestamp. Same is done to the month column which is transformed to a column that only contains the numerical value of the month. The reason for doing so is that most statistical models cannot directly handle datetime object. 
+
+## 2.3.2 Preprocessing of other features
+```{python, echo=FALSE}
+df = df[df['division'] != 'Systemwide']
+df = df[df['division'] != '2020-06-01']
+label_encoders = {}
+categorical_columns = ['division', 'line', 'reporting_category', 'subcategory']
+
+mappings = {}
+
+for column in categorical_columns:
+    label_encoders[column] = LabelEncoder()
+    df[column] = label_encoders[column].fit_transform(df[column])
+    mappings[column] = dict(zip(label_encoders[column].classes_, label_encoders[column].transform(label_encoders[column].classes_)))
+    
+```
+```{python, echo=FALSE}
+#Convert mappings into df from knitr
+
+division_mapping_df = pd.DataFrame(list(mappings['division'].items()), columns=['Original Value', 'Encoded Value'])
+line_mapping_df = pd.DataFrame(list(mappings['line'].items()), columns=['Original Value', 'Encoded Value'])
+reporting_category_mapping_df = pd.DataFrame(list(mappings['reporting_category'].items()), columns=['Original Value', 'Encoded Value'])
+subcategory_mapping_df = pd.DataFrame(list(mappings['subcategory'].items()), columns=['Original Value', 'Encoded Value'])
+```
+
+
+```{r, echo=FALSE}
+division_mapping <- py$division_mapping_df
+line_mapping <- py$line_mapping_df
+reporting_category_mapping <- py$reporting_category_mapping_df
+subcategory_mapping <- py$subcategory_mapping_df
+
+knitr::kable(division_mapping, caption = "Mapping for Subway Divisions")
+knitr::kable(line_mapping, caption = "Mapping for Subway Lines")
+knitr::kable(reporting_category_mapping, caption = "Mapping for Reporting Category")
+knitr::kable(subcategory_mapping, caption = "Mapping for Subcategories")
+```
+First, as I noticed there were quite a few records having input mistakes for the division column, having values such as "2020-06-01" or "Systemwide", these lines were removed. Also, for line, the records with value "systemwide" was also removed as it does not help with forecasting.
+
+As for features other than month, which consist of categorical values, since statistical models require numerical inputs, these categorical values are transformed into numerical values using label encoder. For example, for division, "A DIVISION" would become 1 and "B DIVISION" would become 2. For lines, "1" which stands for line 1 would become 0 and similarly line 2 would become 1. 
+
+## 2.3.3 Train Test Split
+
+```{python, echo=FALSE}
+X = df[['year', 'month', 'division', 'line', 'day_type', 'reporting_category', 'subcategory']]
+y = df['delays']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+```
+Using train_test_split, 70% of the dataframe are selected for fitting the model and 30% are used as test data.
+
+# 3. Forecasting Methods
+
+## 3.1 Decision Tree
+Decision Tree Regression observes the feature of an object and trains a model in the structure of a tree to predict data in the future to produce meaningful continuous output.  
+
+In our problem, there doesn't seem to have any linear relationships between factors causing the delay and the number of delays. However, a decision tree would be able to model non-linear relationships by making splits in the data based on different conditions.
+
+## 3.2 Random Forest
+
+Random Forest is an algorithm that creates a number of decision trees during the training where each tree is fit using a random subset of the training data. The randomness introduces variability among individual trees, reducing the risk of overfitting and improving overall prediction performance.
+
+Thus applying Random Forest Regressor on the MTA forecasting problem might be able to reduce overfitting and create better forecasting than one single decision tree.
+
+# 4. Results
+
+```{r, include = FALSE}
+reticulate::py_install("graphviz")
+```
+
+## 4.1 Decision Tree Result
+
+## 4.1.1 Decision Tree Representation
+```{python, include=FALSE}
+
+ 
+decision_tree_model = DecisionTreeRegressor(max_depth=20,random_state=0)
+
+decision_tree_model.fit(X_train, y_train)
+```
+
+```{python, echo=FALSE}
+from sklearn.tree import plot_tree
+plt.figure(figsize=(20,10))
+plot_tree(decision_tree_model, 
+          feature_names=X.columns,
+          filled=True,
+          rounded=True,
+          max_depth=3,
+          fontsize=10)
+
+
+plt.show()
+
+```
+
+Above is a visualization of Decision Tree regression model fitted using the DecisionTreeRegressor() from sklearn with the max-depth of 20. 
+
+## 4.1.2 Decision Tree Prediction
+
+```{python, include=FALSE}
+
+feature_names = ['year', 'month', 'division', 'line', 'day_type', 'reporting_category', 'subcategory']
+
+future_input_with_names = pd.DataFrame([[2025, 9, 2, 7, 1, 5, 6]], columns=feature_names)
+decision_tree_model.predict(future_input_with_names)[0]
+```
+Using the model fit and tables 4 to 7 for encoded values, we can predict the delay of given conditions. For example, the forecasted number of delays for September 2025, division B, line a on a weekday, caused by Police & Medical, sub-category fire, smoke & debris would be 13.   
+
+
+## 4.1.3 Decision Tree Metrics
+```{python, echo=FALSE}
+y_pred = decision_tree_model.predict(X_test)
+
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+
+feature_importance = pd.Series(decision_tree_model.feature_importances_, index=X.columns).sort_values(ascending=False)
+
+
+mse_r2_df = pd.DataFrame({
+    "Indicator": ["Mean Squared Error", "R-squared"],
+    "Value": [mse, r2]
+})
+
+feature_importance_df = pd.DataFrame({"Feature": feature_importance.index, "Importance": feature_importance.values})
+```
+
+
+```{r, echo=FALSE}
+metrics <- py$mse_r2_df
+feature_importance <- py$feature_importance_df
+
+knitr::kable(metrics, caption = "Model Evaluation Metrics", col.names = c("Metric", "Value"))
+knitr::kable(feature_importance, caption = "Feature Importance", col.names = c("Feature", "Importance"))
+```
+By plugging test data in the result random forest and comparing the expected test result with the actual result, we can get the above metrics. 
+
+The Mean Squared Error, the average squared difference between the actual and predicted results is 2632.34. 
+
+The R-squared value, which means the proportion of variance in the response variable(delay) that can be explained by the model features, is 0.672. This means the decision tree we have obtains 67.2% of the variance of subway delays  
+
+For feature importance, line and subcategory are the most important features, in this decision tree model.
+
+## 4.2 Random Forest Result
+
+## 4.2.1 Random Forest Representation
+```{python, include=FALSE}
+from sklearn.ensemble import RandomForestRegressor
+
+rf_model = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42)
+
+rf_model.fit(X_train, y_train)
+```
+
+```{python, echo=FALSE}
+
+plt.figure(figsize=(20,10))
+plot_tree(rf_model.estimators_[0], 
+          feature_names=X.columns,  
+          filled=True,  
+          rounded=True, 
+          max_depth=3, 
+          fontsize=10) 
+plt.show()
+```
+
+```{python, echo=FALSE}
+
+
+plt.figure(figsize=(20,10))
+plot_tree(rf_model.estimators_[1], 
+          feature_names=X.columns,  
+          filled=True,  
+          rounded=True, 
+          max_depth=3, 
+          fontsize=10) 
+plt.show()
+```
+
+```{python, echo=FALSE}
+
+plt.figure(figsize=(20,10))
+plot_tree(rf_model.estimators_[2], 
+          feature_names=X.columns,  
+          filled=True,  
+          rounded=True, 
+          max_depth=3, 
+          fontsize=10) 
+plt.show()
+```
+Above are three of the decision trees the Random Forest fitted.
+
+
+## 4.2.2 Random Forest Prediction
+
+```{python, include=FALSE}
+rf_model.predict(future_input_with_names)[0]
+```
+Using the same conditions for decision tree, September 2025, division B, line a on a weekday, caused by Police & Medical, sub-category fire, smoke & debris, the expected number of delay given by the Random Forest Algorithm would be 37.75. The reason that the Random Forest is not giving an integer for the number of delays is that it takes the average from multiple decision tree forests. 
+
+## 4.2.3 Random Forest Metrics
+```{python, echo=FALSE}
+y_pred_rf = rf_model.predict(X_test)
+
+mse = mean_squared_error(y_test, y_pred_rf)
+r2 = r2_score(y_test, y_pred_rf)
+
+feature_importance = pd.Series(rf_model.feature_importances_, index=X.columns).sort_values(ascending=False)
+
+mse_r2_df = pd.DataFrame({
+    "Indicator": ["Mean Squared Error", "R-squared"],
+    "Value": [mse, r2]
+})
+
+feature_importance_df = pd.DataFrame({"Feature": feature_importance.index, "Importance": feature_importance.values})
+```
+
+```{r, echo=FALSE}
+metrics <- py$mse_r2_df
+feature_importance <- py$feature_importance_df
+
+knitr::kable(metrics, caption = "Model Evaluation Metrics", col.names = c("Metric", "Value"))
+knitr::kable(feature_importance, caption = "Feature Importance", col.names = c("Feature", "Importance"))
+```
+By plugging test data in the result random forest and comparing the expected test result with the actual result, we can get the above metrics. 
+
+The Mean Squared Error, the average squared difference between the actual and predicted results is 2412.98, which is lower than that of a single decision tree.
+
+The R-squared value, which means the proportion of variance in the response variable(delay) that can be explained by the model features, is 0.699. This means the decision tree we have obtains 69.9% of the variance of subway delays, which is a higher percentage than that of a single decision tree.
+
+For feature importance, line and subcategory are the most important features, in this random forest model, same as in the previous Decision Tree.
+
+
+# 5. Conclusion
+
+In this report, we fit and evaluated Decision Tree and Random Forest to forecast MTA subway delays based on division, line, and operational factors. In terms of performance, the Random Forest Regressor outperformed the Decision Tree as suggested by the lower Mean Squared Error and Higher R-squared value. This is because a lower MSE suggests the model has smaller errors in its prediction and a higher R-squared value means the model is explaining more of the variance in the response variable. 
+
+Both models suggested that subcategories and lines were the most influential features.
+
+
+
+# Bibliography
+
+GeeksforGeeks. (2023, April 18). Label encoding in Python. https://www.geeksforgeeks.org/ml-label-encoding-of-datasets-in-python/  
+
+GeeksforGeeks. (2023, January 11). Python: Decision tree regression using sklearn. https://www.geeksforgeeks.org/python-decision-tree-regression-using-sklearn/  
+
+GeeksforGeeks. (2024, July 12). Random Forest algorithm in machine learning. https://www.geeksforgeeks.org/random-forest-algorithm-in-machine-learning/?ref=header_outind 
+
+Interface to python. Interface to Python • reticulate. (n.d.). https://rstudio.github.io/reticulate/ 
+
+Plot_tree. scikit. (n.d.). https://scikit-learn.org/stable/modules/generated/sklearn.tree.plot_tree.html 
+
+# Appendix
+
+# Generative AI Statement
+
+I used the following generative artificial intelligence(AI) tool: Chat GPT 4o. I used the suggestions such as how to install python package in r's reticulate environment and how to assign python variables to R variables.
+
+# How is this report generated
+
+This report is generated using R markdown with the pdf as the output option. The code chunks that do the plotting, model fitting, and metrics such as MSE, R2 computation were Python except the tables were using R's knitr kable. 

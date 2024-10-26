@@ -3,7 +3,7 @@
 ### Author: Ruilin Peng
 
 ## Project Description
-This project employs R markdown and Python as technical tool. The main goal was to forcast MTA subway delay using Decision Tree and Random Forest and compare the performance.
+This project employs R markdown and Python as technical tool. The main goal was to forcast MTA subway delay using the Decision Tree and the Random Forest and compare the performance.
 
 ## Link to project
 [Github repo](https://github.com/RuilinP/Forecasting-MTA-Subway-Delay-by-Decision-Tree-and-Random-Forest)
